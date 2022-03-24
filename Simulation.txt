@@ -1,0 +1,107 @@
+Usage:
+    lambdasel(xx,y,zz,D.init,beta.init,eps,lam)
+     mixsel(lambda,xx,y,zz,D.init,beta.init,eps)
+
+Description:
+
+     lambdasel is to find the optimal tuning parameter lambda by BIC;
+     mixsel is to select fixed and random effects using the optimal lambda
+
+Arguments
+n         Number of subjects
+ni        Number of obs in each subject
+x         List of predictors for fixed effects
+z         List of predictors for random effects
+y         List of responses
+lambda    Tuning parameter in adaptive lasso
+D.init    Initial value for covariance matrix
+beta.init Initial value for fixed effects
+eps       If an estimator has smaller absolute value than
+          eps, then the parameter is set to zero.
+beta      Estimated coefficeints for fixed effects
+D         Estimated covariance for random effects
+
+
+
+
+Example
+
+
+##simulation 1 in the paper  "A Simultaneous Variable Selection Methodology for Linear Mixed Models"
+
+library("mvtnorm")
+library("MASS")
+library("lme4")
+options (warn=-1) 
+
+###sequence of lambda
+lam=exp(seq(-2, 2, length=20))
+
+CR=0  ##correct number of random selection 
+CF=0  ##correct number of fix selection 
+CM=0  ##correct number of true model
+
+
+##generate data
+test=0
+for (j in 1:150){
+  if (test==100){
+    break
+  }
+  sig <- 1
+  ni  <-  5 
+  n  <-  30 
+  y  <-  NULL 
+  x  <-  NULL 
+  z  <-  NULL 
+  subject  <-  kronecker(1:n, rep(1,ni)) 
+  true.beta  <-  c(1, 1, rep(0,7)) 
+  Dt  <-  matrix(c(9,4.8,0.6,0, 4.8,4,1,0, .6,1,1,0, 0,0,0,0), nrow=4, ncol=4) 
+  for (i in 1:n)  
+  { 
+    x[[i]] <- cbind(matrix(runif(45,-2,2), nrow=5)) 
+    z[[i]] <- cbind(1,matrix(runif(15,-2,2), nrow=5)) 
+    S  <- sig*(z[[i]]%*%Dt%*%t(z[[i]]) + diag(ni))
+    y.temp  <-  t(rmvnorm(1, x[[i]]%*%true.beta, S)) 
+    y[[i]] <- y.temp  
+  } 
+  n <- length(y)
+  y1 <- y[[1]]
+  x1 <- x[[1]]
+  z1 <- z[[1]]
+  for(i in 2:n){
+    y1 <- rbind(y1,y[[i]])
+    x1 <- rbind(x1,x[[i]])
+    z1 <- rbind(z1,z[[i]])
+  }
+
+##assign initial value
+  ob <- lmer(y1~x1-1+(0+z1|subject))
+  hh <- VarCorr(ob)
+  D.init <- hh[[1]]
+  beta.init=as.matrix(fixef(ob))
+  zz=z
+  xx=x
+  
+##Perform the proposed procedure
+  aa=lambdasel(xx,y,zz,D.init,beta.init,eps=.01,lam)
+  if (aa!=100000){
+    test=test+1
+  BIC=lam[which.min(aa)]
+  est=mixsel(BIC,xx,y,zz,D.init,beta.init,eps=.01)
+  
+  #####CORRECT SELECTION
+  if (sum(est$D!=0)==sum(Dt!=0))
+    CR=CR+1
+  if (sum(est$beta!=0)==sum(true.beta!=0))
+    CF=CF+1
+  if(sum(est$D!=0)==sum(Dt!=0) && sum(est$beta!=0)==sum(true.beta!=0) )
+    CM=CM+1
+  print(c(j,test,CR,CF,CM))
+}
+}
+
+##print the results
+CR
+CF
+CM

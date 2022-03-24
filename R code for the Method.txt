@@ -1,0 +1,470 @@
+#define profile log likelihood########
+pll <- function(x,y,z,DDsig,beta){
+  n <- length(x)
+  ni <- mapply(length,y)
+  p <- ncol(x[[1]])
+  q <- ncol(z[[1]])
+  n.tot <- sum(ni)
+  De <- matrix(0,nrow=q,ncol=q)
+  De[lower.tri(De,diag=T)] <- DDsig
+  if(ncol(De)>1){
+    De <- De+t(De)-diag(diag(De))
+  }
+  ll <- 0
+  rl <- 0
+  for(i in 1:n){
+    si <- z[[i]]%*%De%*%t(z[[i]])+diag(1,ni[i])
+    sii <- ginv(si)
+    ei <- y[[i]]-x[[i]]%*%beta
+    rl=rl+t(ei)%*%sii%*%ei
+    if(det(si)<=0){return(-9e10)
+    }else {des <- log(det(si))}
+    ll <- ll-0.5*des
+  }
+  return(ll-.5*n.tot*log(rl)) 
+}
+
+#define penalized profile log likelihood########
+ppll <- function(x,y,z,DDsig,DDsig0,beta,beta0,lambda,weight){
+  n <- length(x)
+  ni <- mapply(length,y)
+  p <- ncol(x[[1]])
+  q <- ncol(z[[1]])
+  n.tot <- sum(ni)
+  De <- matrix(0,nrow=q,ncol=q)
+  De[lower.tri(De,diag=T)] <- DDsig
+  if(ncol(De)>1){
+    De <- De+t(De)-diag(diag(De))
+  }
+  ll <- 0
+  rl <- 0
+  for(i in 1:n){
+    si <- z[[i]]%*%De%*%t(z[[i]])+diag(1,ni[i])
+    sii <- ginv(si)
+    ei <- y[[i]]-x[[i]]%*%beta
+    rl=rl+t(ei)%*%sii%*%ei
+    if(det(si)<=0){return(-9e10)
+    }else {des <- log(det(si))}
+    ll <- ll-0.5*des
+  }
+  return(ll-.5*n.tot*log(rl)-lambda*(sum(abs(DDsig*weight/DDsig0))+sum(abs(beta/beta0))))
+}
+
+
+##define trace function##
+trace <- function(A)
+{
+  sum(diag(A))
+}
+
+##derivative of D
+FdD=function(di,q){
+  if(q>1){
+    k <- q*(q+1)/2
+    dD <- matrix(0,q,q)
+    DD <- rep(0,k)
+    DD[di] <- 1
+    dD[lower.tri(dD,diag=T)] <- DD
+    dD <- dD+t(dD)-diag(diag(dD))
+  }else{
+    dD <- matrix(1)
+  }
+  list(dD)
+}
+
+### derivative of V  V=ZDZ'+I 
+FdV <- function(r,z,dD,i){
+  list(z[[i]]%*%dD[[r]]%*%t(z[[i]]))
+}
+
+#### first derivative of log(sum(rV^(-1)r)) wrt beta
+FD1 <- function(p,n,x,ei,sii){
+  to <- matrix(0,1,1)
+  tf <- matrix(0,p,1)
+  for(i in 1:n){
+    to=to+t(ei[[i]])%*%sii[[i]]%*%ei[[i]]
+    tf=tf+t(x[[i]])%*%sii[[i]]%*%ei[[i]]
+  }
+  tf/as.numeric(to)
+}
+## second derivative of log(sum(rV^(-1)r)) wrt beta###
+SD1 <- function(p,n,y,x,beta,sii){
+  to <- matrix(0,1,1)
+  tf <- matrix(0,p,1)
+  ts <- matrix(0,p,p)
+  for(i in 1:n){
+    ei=y[[i]]-x[[i]]%*%beta
+    to=to+t(ei)%*%sii[[i]]%*%ei
+    tf=tf-2*t(x[[i]])%*%sii[[i]]%*%ei
+    ts=ts+2*t(x[[i]])%*%sii[[i]]%*%x[[i]]
+  }
+  (ts*as.numeric(to)-tf%*%t(tf))/(as.numeric(to))^2
+}
+
+## first derivative of sum(log|vi|) wrt theta###
+FD2 <- function(j,y,n,sii,dV){
+  ni <- mapply(length,y)
+  t8=matrix(0,ni,ni)
+  for(i in 1:n){
+    derij <- dV[[i]][[j]]
+    t8=t8+sii[[i]]%*%derij
+  }
+  trace(t8)
+}
+## second derivative of sum(log|vi|) wrt theta###
+SD2 <- function(m,j,y,n,dV,sii){
+  ni <- mapply(length,y)
+  t9=matrix(0,ni,ni)
+  for (i in 1:n){
+    derij <- dV[[i]][[j]]
+    derim <- dV[[i]][[m]]
+    t9=t9-t(sii[[i]]%*%derim%*%sii[[i]])%*%derij
+  }
+  trace(t9)
+}
+## first derivative of log(sum(rV^(-1)r)) wrt theta###
+FD3 <- function(j,n,dV,ei,sii){
+  t5 <- matrix(0,1,1)
+  t6 <- matrix(0,1,1)
+  for(i in 1:n){
+    derij <- dV[[i]][[j]]
+    t5=t5+t(ei[[i]])%*%sii[[i]]%*%derij%*%sii[[i]]%*%ei[[i]]
+    t6=t6+t(ei[[i]])%*%sii[[i]]%*%ei[[i]]
+  }
+  t5/t6
+}
+## second derivative of log(sum(rV^(-1)r)) wrt theta###
+SD3 <- function(m,j,n,dV,ei,sii){
+  t5 <- matrix(0,1,1)
+  t6 <- matrix(0,1,1)
+  t7 <- matrix(0,1,1)
+  for(i in 1:n){
+    derij <- dV[[i]][[j]]
+    derim <- dV[[i]][[m]]
+    t5=t5-t(ei[[i]])%*%sii[[i]]%*%derij%*%sii[[i]]%*%ei[[i]]
+    t6=t6+t(ei[[i]])%*%sii[[i]]%*%ei[[i]]
+    t7 <- t7+t(ei[[i]])%*%sii[[i]]%*%(derim%*%sii[[i]]%*%derij
+                                      +derij%*%sii[[i]]%*%derim)%*%sii[[i]]%*%ei[[i]] 
+  }
+  (t7%*%t6-(t5)^2)/(t6)^2
+}
+
+
+SD4=function(p,j,n,x,dV,sii,ei){
+  t1 <- matrix(0,p,1)
+  t2 <- matrix(0,1,1)
+  t3 <- matrix(0,1,1)
+  t4 <- matrix(0,p,1)
+  for(i in 1:n){
+    derij <- dV[[i]][[j]]
+    t1=t1+t(x[[i]])%*%(sii[[i]]%*%derij%*%sii[[i]]+t(sii[[i]]%*%derij%*%sii[[i]]))%*%ei[[i]]
+    t2=t2+t(ei[[i]])%*%sii[[i]]%*%ei[[i]]
+    t3=t3+t(ei[[i]])%*%sii[[i]]%*%derij%*%sii[[i]]%*%ei[[i]]
+    t4=t4+2*t(x[[i]])%*%sii[[i]]%*%ei[[i]]
+  }
+  (t1%*%t2-as.numeric(t3)*t4)/(as.numeric(t2))^2
+}
+
+
+###Find the optimal tuning parameter lambda
+
+lambdasel<- function(xx,y,zz,D.init,beta.init,eps,lam){
+  BIC=numeric()
+  for (w in 1:length(lam)){
+    z=zz
+    x=xx
+    lambda=lam[w]
+    n <- length(x)
+    ni <- mapply(length,y)
+    n.tot <- sum(ni)
+    p <- ncol(x[[1]])
+    q <- ncol(z[[1]])
+    p0=p
+    q0 <- q
+    k <- q*(q+1)/2
+    De <- D.init
+    beta0=beta.init
+    betanew<- beta.init
+    dD <- sapply(1:k,FdD,q)
+    weight <- diag(rep(1,q))
+    weight <- weight[lower.tri(weight,diag=T)]
+    DDsig0 <- D.init[lower.tri(D.init,diag=T)]
+    # DD0 <- D.init
+    DDsignew <- DDsig0
+    theta0=c(beta0,DDsig0)
+    step <- 1
+    maxstep <- 100
+    converge <- F
+    record1 <- seq(p)
+    record2=seq(q)
+    
+    
+    while(converge==F&&step<maxstep&&ncol(De)>1){
+      DDsig <- DDsignew
+      beta <- betanew
+      theta= c(betanew,DDsignew)
+      #sc <- rep(0,k+p)
+      #H <- matrix(0,nrow=k+p,ncol=k+p)
+      si <- list(NA)
+      length(si) <- n
+      sii <- si
+      dV <- list(NA)
+      length(dV) <- n
+      ei <- list(NA)
+      length(ei) <- n
+      for(i in 1:n){
+        dV[[i]] <- sapply(1:k,FdV,z,dD,i)
+        si[[i]] <- z[[i]]%*%De%*%t(z[[i]])+diag(1,ni[i])
+        sii[[i]] <- ginv(si[[i]])
+        ei[[i]] <- y[[i]]-x[[i]]%*%beta
+      }
+      sc1=FD1(p,n,x,ei,sii)
+      sc2=sapply(1:k,FD2,y,n,sii,dV)
+      sc3=sapply(1:k,FD3,n,dV,ei,sii)
+      sc=c(n.tot*sc1,-.5*sc2+.5*n.tot*sc3)  ## score vector is (N*FD1,-.5*FD2+.5*N*FD3)
+      
+      he1=SD1(p,n,y,x,beta,sii)    
+      he2=he3=matrix(0,k,k)
+      for (m in 1:k){
+        for (j in 1:k){
+          he2[m,j]=SD2(m,j,y,n,dV,sii)
+          he3[m,j]=SD3(m,j,n,dV,ei,sii)
+        }
+      }
+      he4=matrix(0,p,k)
+      for (j in 1:k){
+        he4[,j]=SD4(p,j,n,x,dV,sii,ei)
+      }
+      
+      
+      H1=cbind(-.5*n.tot*he1,-.5*n.tot*he4)
+      H2=cbind(t(-.5*n.tot*he4),-.5*he2-.5*n.tot*he3)
+      H=rbind(H1,H2)
+      ##the hessian matrix is (-.5*N*SD1, -.5*N*SD4)
+      ####################### (t(-.5*N*SD4), -.5*SD2-.5*N*SD3)
+      
+      sc=sc-lambda*c(sign(beta),weight*sign(DDsig))/abs(theta0)
+      H <- H-lambda*diag(c(rep(1,length(beta)),weight)/abs(theta*theta0))
+      
+      
+      llold <- ppll(x,y,z,DDsig,DDsig0,beta,beta0,lambda,weight)
+      llnew <- llold-1
+      mm <- 1
+      la <- 1
+      gH <- ginv(H)%*%sc
+      
+      if (is.na(llnew<=llold&&mm<15)){return(10000)}
+      while(llnew<=llold&&mm<15){
+        thetanew<- theta-la*gH
+        betanew=thetanew[1:p]
+        DDsignew=thetanew[(p+1):(p+k)]
+        llnew <- ppll(x,y,z,DDsignew,DDsig0,betanew,beta0,lambda,weight)
+        if (is.na(llnew<=llold&&mm<15)){return(10000)}
+        la <- 1/2^mm
+        mm <- mm+1
+      }
+      #thetanew<- theta-gH
+      #betanew=thetanew[1:p]
+      #DDsignew=thetanew[(p+1):(p+k)]
+      ad1 <- abs(betanew)<=eps
+      record1 <- record1[!ad1]
+      for(j in 1:n){
+        x[[j]] <- as.matrix(x[[j]][,!ad1])
+      }
+      bbetanew=betanew
+      bbetanew[ad1]=0
+      
+      
+      DDnew <- DDsignew
+      Dnew <- matrix(0,nrow=q,ncol=q)
+      Dnew[lower.tri(Dnew,diag=T)] <- DDnew
+      if(ncol(Dnew)>1)
+        Dnew <- Dnew+t(Dnew)-diag(diag(Dnew))
+      ad2 <- abs(diag(Dnew))<=eps
+      record2 <- record2[!ad2]
+      Dnew[ad2,] <- 0
+      Dnew[,ad2] <- 0
+      for(j in 1:n){
+        z[[j]] <- as.matrix(z[[j]][,!ad2])
+      }
+      DDnew <- Dnew[lower.tri(Dnew,diag=T)]
+      
+      tthetanew=c(bbetanew,DDnew)
+      
+      
+      if(abs(sum(tthetanew-theta))<1e-8)converge <- TRUE
+      
+      p <- ncol(x[[1]])
+      q <- ncol(z[[1]])
+      k <- q*(q+1)/2
+      betanew=betanew[!ad1]
+      beta0=beta0[!ad1]
+      
+      DDsig0=DDsig0[abs(DDnew)>0]
+      De <- Dnew[!ad2,!ad2]
+      De <- as.matrix(De)
+      dD <- sapply(1:k,FdD,q)
+      weight <- diag(rep(1,q))
+      weight <- weight[lower.tri(weight,diag=T)]
+      DDsignew <- De[lower.tri(De,diag=T)]
+      thetanew= c(betanew,DDsignew)
+      theta0=c(beta0,DDsig0)
+      step=step+1
+    }
+    BIC[w]=-2*pll(x,y,z,DDsignew,betanew)+log(n.tot)*length(thetanew)
+  }
+  return(BIC)
+}
+
+
+
+#####select fixed and random effects using the optimal lambda
+mixsel<- function(lambda,xx,y,zz,D.init,beta.init,eps){
+  z=zz
+  x=xx
+  n <- length(x)
+  ni <- mapply(length,y)
+  n.tot <- sum(ni)
+  p <- ncol(x[[1]])
+  q <- ncol(z[[1]])
+  p0=p
+  q0 <- q
+  k <- q*(q+1)/2
+  De <- D.init
+  beta0=beta.init
+  betanew<- beta.init
+  dD <- sapply(1:k,FdD,q)
+  weight <- diag(rep(1,q))
+  weight <- weight[lower.tri(weight,diag=T)]
+  DDsig0 <- D.init[lower.tri(D.init,diag=T)]
+  # DD0 <- D.init
+  DDsignew <- DDsig0
+  theta0=c(beta0,DDsig0)
+  step <- 1
+  maxstep <- 100
+  converge <- F
+  record1 <- seq(p)
+  record2=seq(q)
+  
+  
+  while(converge==F&&step<maxstep&&ncol(De)>1){
+    DDsig <- DDsignew
+    beta <- betanew
+    theta= c(betanew,DDsignew)
+    #sc <- rep(0,k+p)
+    #H <- matrix(0,nrow=k+p,ncol=k+p)
+    si <- list(NA)
+    length(si) <- n
+    sii <- si
+    dV <- list(NA)
+    length(dV) <- n
+    ei <- list(NA)
+    length(ei) <- n
+    for(i in 1:n){
+      dV[[i]] <- sapply(1:k,FdV,z,dD,i)
+      si[[i]] <- z[[i]]%*%De%*%t(z[[i]])+diag(1,ni[i])
+      sii[[i]] <- ginv(si[[i]])
+      ei[[i]] <- y[[i]]-x[[i]]%*%beta
+    }
+    sc1=FD1(p,n,x,ei,sii)
+    sc2=sapply(1:k,FD2,y,n,sii,dV)
+    sc3=sapply(1:k,FD3,n,dV,ei,sii)
+    sc=c(n.tot*sc1,-.5*sc2+.5*n.tot*sc3)  ## score vector is (N*FD1,-.5*FD2+.5*N*FD3)
+    
+    he1=SD1(p,n,y,x,beta,sii)    
+    he2=he3=matrix(0,k,k)
+    for (m in 1:k){
+      for (j in 1:k){
+        he2[m,j]=SD2(m,j,y,n,dV,sii)
+        he3[m,j]=SD3(m,j,n,dV,ei,sii)
+      }
+    }
+    he4=matrix(0,p,k)
+    for (j in 1:k){
+      he4[,j]=SD4(p,j,n,x,dV,sii,ei)
+    }
+    
+    
+    H1=cbind(-.5*n.tot*he1,-.5*n.tot*he4)
+    H2=cbind(t(-.5*n.tot*he4),-.5*he2-.5*n.tot*he3)
+    H=rbind(H1,H2)
+    ##the hessian matrix is (-.5*N*SD1, -.5*N*SD4)
+    ####################### (t(-.5*N*SD4), -.5*SD2-.5*N*SD3)
+    
+    sc=sc-lambda*c(sign(beta),weight*sign(DDsig))/abs(theta0)
+    H <- H-lambda*diag(c(rep(1,length(beta)),weight)/abs(theta*theta0))
+    
+    
+    llold <- ppll(x,y,z,DDsig,DDsig0,beta,beta0,lambda,weight)
+    llnew <- llold-1
+    mm <- 1
+    la <- 1
+    gH <- ginv(H)%*%sc
+    
+    
+    while(llnew<=llold&&mm<15){
+      thetanew<- theta-la*gH
+      betanew=thetanew[1:p]
+      DDsignew=thetanew[(p+1):(p+k)]
+      llnew <- ppll(x,y,z,DDsignew,DDsig0,betanew,beta0,lambda,weight)
+      la <- 1/2^mm
+      mm <- mm+1
+    }
+    #thetanew<- theta-gH
+    #betanew=thetanew[1:p]
+    #DDsignew=thetanew[(p+1):(p+k)]
+    ad1 <- abs(betanew)<=eps
+    record1 <- record1[!ad1]
+    for(j in 1:n){
+      x[[j]] <- as.matrix(x[[j]][,!ad1])
+    }
+    bbetanew=betanew
+    bbetanew[ad1]=0
+    
+    
+    DDnew <- DDsignew
+    Dnew <- matrix(0,nrow=q,ncol=q)
+    Dnew[lower.tri(Dnew,diag=T)] <- DDnew
+    if(ncol(Dnew)>1)
+      Dnew <- Dnew+t(Dnew)-diag(diag(Dnew))
+    ad2 <- abs(diag(Dnew))<=eps
+    record2 <- record2[!ad2]
+    Dnew[ad2,] <- 0
+    Dnew[,ad2] <- 0
+    for(j in 1:n){
+      z[[j]] <- as.matrix(z[[j]][,!ad2])
+    }
+    DDnew <- Dnew[lower.tri(Dnew,diag=T)]
+    
+    tthetanew=c(bbetanew,DDnew)
+    
+    
+    if(abs(sum(tthetanew-theta))<1e-8)converge <- TRUE
+    
+    p <- ncol(x[[1]])
+    q <- ncol(z[[1]])
+    k <- q*(q+1)/2
+    betanew=betanew[!ad1]
+    beta0=beta0[!ad1]
+    
+    DDsig0=DDsig0[abs(DDnew)>0]
+    De <- Dnew[!ad2,!ad2]
+    De <- as.matrix(De)
+    dD <- sapply(1:k,FdD,q)
+    weight <- diag(rep(1,q))
+    weight <- weight[lower.tri(weight,diag=T)]
+    DDsignew <- De[lower.tri(De,diag=T)]
+    thetanew= c(betanew,DDsignew)
+    theta0=c(beta0,DDsig0)
+    step=step+1
+  }
+  bet <- rep(0,p0)
+  bet[record1]=betanew
+  fit <- NULL
+  Df <- matrix(0,q0,q0)
+  Df[record2,record2]=De
+  fit <- NULL
+  fit$beta <- bet
+  fit$D <- Df
+  return(fit)
+}
